@@ -58,9 +58,8 @@ function processLineBytes(buffer, start, end) {
     const stationBuffer = buffer.subarray(start, separatorPos);
     const stationName = stationBuffer.toString('utf-8');
     
-    // Parse temperature value from bytes
-    const temperatureStr = buffer.subarray(separatorPos + 1, end).toString('utf-8');
-    const temperature = Math.floor(parseFloat(temperatureStr) * 10);
+    // Parse temperature value directly from bytes without string conversion
+    const temperature = parseTemperatureBytes(buffer, separatorPos + 1, end);
     
     // Update station data
     if (stationMap.has(stationName)) {
@@ -78,6 +77,40 @@ function processLineBytes(buffer, start, end) {
             count: 1
         });
     }
+}
+
+// Fast parsing of temperature directly from bytes
+function parseTemperatureBytes(buffer, start, end) {
+    let value = 0;
+    let negative = false;
+    let decimalSeen = false;
+    let decimalPos = 0;
+    
+    for (let i = start; i < end; i++) {
+        const byte = buffer[i];
+        
+        if (byte === 45) { // '-' character
+            negative = true;
+        } else if (byte === 46) { // '.' character
+            decimalSeen = true;
+            decimalPos = 1;
+        } else if (byte >= 48 && byte <= 57) { // '0' to '9' characters
+            value = value * 10 + (byte - 48);
+            if (decimalSeen) {
+                decimalPos++;
+            }
+        }
+    }
+    
+    // Multiply by 10 to avoid floating-point calculations
+    // and adjust decimal places
+    if (decimalPos === 0) {
+        value *= 10; // No decimal point, add a trailing zero
+    } else if (decimalPos > 2) {
+        value = Math.floor(value / Math.pow(10, decimalPos - 2));
+    }
+    
+    return negative ? -value : value;
 }
 
 function printCompiledResults() {
