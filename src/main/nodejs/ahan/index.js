@@ -1,4 +1,4 @@
-import fs from 'fs';
+const fs = require('fs');
 const fileName = process.argv[2];
 const readStream = fs.createReadStream(fileName);
 const stationMap = new Map(); // Single map to hold all data per station
@@ -54,25 +54,24 @@ function processLineBytes(buffer, start, end) {
     
     if (separatorPos === -1) return; // Skip malformed lines
     
-    // Create a hash key from the station buffer
+    // Create a station key from the buffer
     const stationBuffer = buffer.subarray(start, separatorPos);
-    const stationKey = bufferToKey(stationBuffer);
+    const stationName = stationBuffer.toString('utf-8');
     
     // Parse temperature value from bytes
     const temperatureStr = buffer.subarray(separatorPos + 1, end).toString('utf-8');
     const temperature = Math.floor(parseFloat(temperatureStr) * 10);
     
     // Update station data
-    if (stationMap.has(stationKey)) {
-        const stationData = stationMap.get(stationKey);
+    if (stationMap.has(stationName)) {
+        const stationData = stationMap.get(stationName);
         stationData.min = Math.min(stationData.min, temperature);
         stationData.max = Math.max(stationData.max, temperature);
         stationData.sum += temperature;
         stationData.count += 1;
     } else {
-        // Store the original buffer for later conversion to string
-        stationMap.set(stationKey, {
-            buffer: Buffer.from(stationBuffer), // Create a copy of the buffer
+        // Store the data for this station
+        stationMap.set(stationName, {
             min: temperature,
             max: temperature,
             sum: temperature,
@@ -81,37 +80,28 @@ function processLineBytes(buffer, start, end) {
     }
 }
 
-// Create a unique key for the buffer content
-function bufferToKey(buffer) {
-    // Using the buffer as a key in a Map can be done by creating a string 
-    // representation of the bytes, but NOT converting to UTF-8
-    let key = '';
-    for (let i = 0; i < buffer.length; i++) {
-        key += String.fromCharCode(buffer[i]);
-    }
-    return key;
-}
-
 function printCompiledResults() {
-    // Sort station keys
-    const sortedEntries = Array.from(stationMap.entries()).sort((a, b) => {
-        const aName = a[1].buffer.toString('utf-8');
-        const bName = b[1].buffer.toString('utf-8');
-        return aName.localeCompare(bName);
-    });
-
-    let result =
-        '{' +
-        sortedEntries
-            .map(([_, data]) => {
-                const stationName = data.buffer.toString('utf-8');
-                return `${stationName}=${round(data.min / 10)}/${round(
-                    data.sum / 10 / data.count
-                )}/${round(data.max / 10)}`;
-            })
-            .join(', ') +
-        '}';
-
+    // Get sorted station names - using basic JavaScript sort which should match expected behavior
+    const sortedStations = Array.from(stationMap.keys()).sort();
+    
+    // Build result string exactly as in the working implementation
+    let result = '{';
+    
+    for (let i = 0; i < sortedStations.length; i++) {
+        if (i > 0) {
+            result += ', ';
+        }
+        
+        const stationName = sortedStations[i];
+        const data = stationMap.get(stationName);
+        
+        result += `${stationName}=${round(data.min / 10)}/${round(
+            data.sum / 10 / data.count
+        )}/${round(data.max / 10)}`;
+    }
+    
+    result += '}';
+    
     console.log(result);
 }
 
