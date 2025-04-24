@@ -1,10 +1,7 @@
 import fs from 'fs';
 const fileName = process.argv[2];
 const readStream = fs.createReadStream(fileName);
-const minMap = new Map();
-const maxMap = new Map();
-const sumMap = new Map();
-const countMap = new Map();
+const stationMap = new Map(); // Single map to hold all data per station
 let buffer = Buffer.alloc(0);
 
 readStream.on('data', function processChunk(chunk) {
@@ -57,49 +54,60 @@ function processLineBytes(buffer, start, end) {
     
     if (separatorPos === -1) return; // Skip malformed lines
     
-    // Extract station name as UTF-8 string
-    const stationName = buffer.subarray(start, separatorPos).toString('utf-8');
+    // Create a hash key from the station buffer
+    const stationBuffer = buffer.subarray(start, separatorPos);
+    const stationKey = bufferToKey(stationBuffer);
     
-    // Parse temperature value
+    // Parse temperature value from bytes
     const temperatureStr = buffer.subarray(separatorPos + 1, end).toString('utf-8');
     const temperature = Math.floor(parseFloat(temperatureStr) * 10);
     
-    // Update maps
-    if (minMap.has(stationName)) {
-        minMap.set(stationName, Math.min(minMap.get(stationName), temperature));
+    // Update station data
+    if (stationMap.has(stationKey)) {
+        const stationData = stationMap.get(stationKey);
+        stationData.min = Math.min(stationData.min, temperature);
+        stationData.max = Math.max(stationData.max, temperature);
+        stationData.sum += temperature;
+        stationData.count += 1;
     } else {
-        minMap.set(stationName, temperature);
-    }
-
-    if (maxMap.has(stationName)) {
-        maxMap.set(stationName, Math.max(maxMap.get(stationName), temperature));
-    } else {
-        maxMap.set(stationName, temperature);
-    }
-
-    if (sumMap.has(stationName)) {
-        sumMap.set(stationName, sumMap.get(stationName) + temperature);
-    } else {
-        sumMap.set(stationName, temperature);
-    }
-
-    if (countMap.has(stationName)) {
-        countMap.set(stationName, countMap.get(stationName) + 1);
-    } else {
-        countMap.set(stationName, 1);
+        // Store the original buffer for later conversion to string
+        stationMap.set(stationKey, {
+            buffer: Buffer.from(stationBuffer), // Create a copy of the buffer
+            min: temperature,
+            max: temperature,
+            sum: temperature,
+            count: 1
+        });
     }
 }
 
+// Create a unique key for the buffer content
+function bufferToKey(buffer) {
+    // Using the buffer as a key in a Map can be done by creating a string 
+    // representation of the bytes, but NOT converting to UTF-8
+    let key = '';
+    for (let i = 0; i < buffer.length; i++) {
+        key += String.fromCharCode(buffer[i]);
+    }
+    return key;
+}
+
 function printCompiledResults() {
-    const sortedStations = Array.from(minMap.keys()).sort();
+    // Sort station keys
+    const sortedEntries = Array.from(stationMap.entries()).sort((a, b) => {
+        const aName = a[1].buffer.toString('utf-8');
+        const bName = b[1].buffer.toString('utf-8');
+        return aName.localeCompare(bName);
+    });
 
     let result =
         '{' +
-        sortedStations
-            .map((station) => {
-                return `${station}=${round(minMap.get(station) / 10)}/${round(
-                    sumMap.get(station) / 10 / countMap.get(station)
-                )}/${round(maxMap.get(station) / 10)}`;
+        sortedEntries
+            .map(([_, data]) => {
+                const stationName = data.buffer.toString('utf-8');
+                return `${stationName}=${round(data.min / 10)}/${round(
+                    data.sum / 10 / data.count
+                )}/${round(data.max / 10)}`;
             })
             .join(', ') +
         '}';
