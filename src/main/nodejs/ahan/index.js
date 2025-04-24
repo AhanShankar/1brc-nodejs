@@ -1,54 +1,95 @@
 import fs from 'fs';
 const fileName = process.argv[2];
-const readStream = fs.createReadStream(fileName, 'utf-8');
+const readStream = fs.createReadStream(fileName);
 const minMap = new Map();
 const maxMap = new Map();
 const sumMap = new Map();
 const countMap = new Map();
-let buffer = '';
-readStream.on('data', (data) => {
-    buffer += data;  // Append the new data chunk to the buffer
+let buffer = Buffer.alloc(0);
 
-    // Process lines in the buffer
-    let lines = buffer.split('\n');
+readStream.on('data', function processChunk(chunk) {
+    // Concatenate the new chunk with any remaining buffer
+    buffer = Buffer.concat([buffer, chunk]);
     
-    // Check if the last line is incomplete and move it to the buffer
-    buffer = lines.pop();  // The last part (which may be incomplete) stays in the buffer
+    let lineStart = 0;
+    let i = 0;
     
-    // Process each complete line
-    for (const line of lines) {
-        if (line === '') continue; // Skip empty lines
-        
-        const [stationName, temperatureStr] = line.split(';');
-        const temperature = Math.floor(parseFloat(temperatureStr) * 10);
-
-        // Update the maps with the parsed temperature values
-        if (minMap.has(stationName)) {
-            minMap.set(stationName, Math.min(minMap.get(stationName), temperature));
-        } else {
-            minMap.set(stationName, temperature);
+    // Iterate through each byte
+    while (i < buffer.length) {
+        // Check for newline (ASCII 10)
+        if (buffer[i] === 10) {
+            if (i > lineStart) {
+                // Process the line
+                processLineBytes(buffer, lineStart, i);
+            }
+            lineStart = i + 1;
         }
-
-        if (maxMap.has(stationName)) {
-            maxMap.set(stationName, Math.max(maxMap.get(stationName), temperature));
-        } else {
-            maxMap.set(stationName, temperature);
-        }
-
-        if (sumMap.has(stationName)) {
-            sumMap.set(stationName, sumMap.get(stationName) + temperature);
-        } else {
-            sumMap.set(stationName, temperature);
-        }
-
-        if (countMap.has(stationName)) {
-            countMap.set(stationName, countMap.get(stationName) + 1);
-        } else {
-            countMap.set(stationName, 1);
-        }
+        i++;
+    }
+    
+    // Keep the remaining incomplete line in the buffer
+    if (lineStart < buffer.length) {
+        buffer = buffer.subarray(lineStart);
+    } else {
+        buffer = Buffer.alloc(0);
     }
 });
-readStream.on('end', printCompiledResults)
+
+readStream.on('end', function processEnd() {
+    // Process any remaining data in the buffer
+    if (buffer.length > 0) {
+        processLineBytes(buffer, 0, buffer.length);
+    }
+    
+    printCompiledResults();
+});
+
+function processLineBytes(buffer, start, end) {
+    let separatorPos = -1;
+    
+    // Find the semicolon separator by iterating through bytes
+    for (let i = start; i < end; i++) {
+        if (buffer[i] === 59) { // 59 is ASCII for semicolon
+            separatorPos = i;
+            break;
+        }
+    }
+    
+    if (separatorPos === -1) return; // Skip malformed lines
+    
+    // Extract station name as UTF-8 string
+    const stationName = buffer.subarray(start, separatorPos).toString('utf-8');
+    
+    // Parse temperature value
+    const temperatureStr = buffer.subarray(separatorPos + 1, end).toString('utf-8');
+    const temperature = Math.floor(parseFloat(temperatureStr) * 10);
+    
+    // Update maps
+    if (minMap.has(stationName)) {
+        minMap.set(stationName, Math.min(minMap.get(stationName), temperature));
+    } else {
+        minMap.set(stationName, temperature);
+    }
+
+    if (maxMap.has(stationName)) {
+        maxMap.set(stationName, Math.max(maxMap.get(stationName), temperature));
+    } else {
+        maxMap.set(stationName, temperature);
+    }
+
+    if (sumMap.has(stationName)) {
+        sumMap.set(stationName, sumMap.get(stationName) + temperature);
+    } else {
+        sumMap.set(stationName, temperature);
+    }
+
+    if (countMap.has(stationName)) {
+        countMap.set(stationName, countMap.get(stationName) + 1);
+    } else {
+        countMap.set(stationName, 1);
+    }
+}
+
 function printCompiledResults() {
     const sortedStations = Array.from(minMap.keys()).sort();
 
@@ -65,8 +106,8 @@ function printCompiledResults() {
 
     console.log(result);
 }
+
 function round(num) {
     const fixed = Math.round(10 * num) / 10;
-
     return fixed.toFixed(1);
 }
