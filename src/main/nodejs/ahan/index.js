@@ -1,8 +1,18 @@
 const fs = require('fs');
 const fileName = process.argv[2];
-const readStream = fs.createReadStream(fileName);
-const stationMap = new Map(); // Single map to hold all data per station
+const readStream = fs.createReadStream(fileName, { highWaterMark: 1e9 });
+const stationMap = new Map(); // Map to hold data per station
 let buffer = Buffer.alloc(0);
+
+// Constants for parsing
+const NEWLINE = 10; // ASCII for newline
+const SEMICOLON = 59; // ASCII for semicolon
+
+// Temperature can be:
+// 1.1    -> 3 chars -> newline at position i+3
+// 11.1   -> 4 chars -> newline at position i+4
+// -9.9   -> 4 chars -> newline at position i+4
+// -99.9  -> 5 chars -> newline at position i+5
 
 readStream.on('data', function processChunk(chunk) {
     // Concatenate the new chunk with any remaining buffer
@@ -63,13 +73,14 @@ function processLineBytes(buffer, start, end) {
     
     // Update station data
     if (stationMap.has(stationName)) {
+        // We've seen this station, update its data
         const stationData = stationMap.get(stationName);
         stationData.min = Math.min(stationData.min, temperature);
         stationData.max = Math.max(stationData.max, temperature);
         stationData.sum += temperature;
         stationData.count += 1;
     } else {
-        // Store the data for this station
+        // New station, add to the map
         stationMap.set(stationName, {
             min: temperature,
             max: temperature,
@@ -79,38 +90,37 @@ function processLineBytes(buffer, start, end) {
     }
 }
 
-// Fast parsing of temperature directly from bytes
+// Optimized temperature parsing with the constraint of exactly one decimal place
 function parseTemperatureBytes(buffer, start, end) {
-    let value = 0;
-    let negative = false;
-    let decimalSeen = false;
-    let decimalPos = 0;
+    // Since we know there's always exactly one decimal place, we can
+    // simplify by just reading all digits and multiplying appropriately
     
-    for (let i = start; i < end; i++) {
-        const byte = buffer[i];
-        
-        if (byte === 45) { // '-' character
-            negative = true;
-        } else if (byte === 46) { // '.' character
-            decimalSeen = true;
-            decimalPos = 1;
-        } else if (byte >= 48 && byte <= 57) { // '0' to '9' characters
-            value = value * 10 + (byte - 48);
-            if (decimalSeen) {
-                decimalPos++;
-            }
-        }
+    // Check for minus sign
+    let negative = buffer[start] === 45; // '-' is ASCII 45
+    
+    // Starting position for digits (skip minus sign if present)
+    let i = negative ? start + 1 : start;
+    
+    // First digit before decimal (can be multiple digits if value >= 10)
+    let intPart = 0;
+    
+    // Find the decimal point
+    while (i < end && buffer[i] !== 46) { // '.' is ASCII 46
+        // Accumulate integer part digits
+        intPart = intPart * 10 + (buffer[i] - 48); // '0' is ASCII 48
+        i++;
     }
     
-    // Multiply by 10 to avoid floating-point calculations
-    // and adjust decimal places
-    if (decimalPos === 0) {
-        value *= 10; // No decimal point, add a trailing zero
-    } else if (decimalPos > 2) {
-        value = Math.floor(value / Math.pow(10, decimalPos - 2));
-    }
+    // Skip the decimal point
+    i++;
     
-    return negative ? -value : value;
+    // Read the single digit after decimal (we know there's exactly one)
+    const decimalPart = buffer[i] - 48;
+    
+    // Compute final result: multiply by 10 to get fixed-point integer
+    const result = intPart * 10 + decimalPart;
+    
+    return negative ? -result : result;
 }
 
 function printCompiledResults() {
@@ -133,9 +143,9 @@ function printCompiledResults() {
         )}/${round(data.max / 10)}`;
     }
     
-    result += '}';
+    result += '}\n';
     
-    console.log(result);
+    process.stdout.write(result);
 }
 
 function round(num) {
