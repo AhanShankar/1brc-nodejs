@@ -8,40 +8,14 @@ let buffer = Buffer.alloc(0);
 const NEWLINE = 10; // ASCII for newline
 
 readStream.on('data', function processChunk(chunk) {
-    // Concatenate the new chunk with any remaining buffe
+    // Only concatenate if we have leftover data, otherwise use the chunk directly
     if (buffer.length > 0) {
         buffer = Buffer.concat([buffer, chunk]);
+        processBuffer(buffer);
+        // Reset the buffer after processing if we ended at a complete line
     } else {
-        buffer = chunk;
-    }
-
-    let lineStart = 0;
-    let i = 0;
-    let separatorPos = -1;
-
-    // Iterate through each byte
-    while (i < buffer.length) {
-        // Check for semicolon (ASCII 59)
-        if (buffer[i] === 59) { // 59 is ASCII for semicolon
-            separatorPos = i;
-        }
-        // Check for newline (ASCII 10)
-        else if (buffer[i] === NEWLINE) {
-            if (i > lineStart) {
-                // Process the line
-                processLineBytes(buffer, lineStart, i, separatorPos);
-            }
-            lineStart = i + 1;
-            separatorPos = -1; // Reset separator position for next line
-        }
-        i++;
-    }
-
-    // Keep the remaining incomplete line in the buffer
-    if (lineStart < buffer.length) {
-        buffer = buffer.subarray(lineStart);
-    } else {
-        buffer = Buffer.alloc(0);
+        processBuffer(chunk);
+        // No need to keep chunk in buffer if we processed everything
     }
 });
 
@@ -58,9 +32,41 @@ readStream.on('end', function processEnd() {
         }
         processLineBytes(buffer, 0, buffer.length, separatorPos);
     }
-
+    
     printCompiledResults();
 });
+
+// Process a buffer ensuring we stop at complete lines
+function processBuffer(buf) {
+    let lineStart = 0;
+    let i = 0;
+    let separatorPos = -1;
+    
+    // Iterate through each byte
+    while (i < buf.length) {
+        // Check for semicolon (ASCII 59)
+        if (buf[i] === 59) { // 59 is ASCII for semicolon
+            separatorPos = i;
+        }
+        // Check for newline (ASCII 10)
+        else if (buf[i] === NEWLINE) {
+            if (i > lineStart) {
+                // Process the line
+                processLineBytes(buf, lineStart, i, separatorPos);
+            }
+            lineStart = i + 1;
+            separatorPos = -1; // Reset separator position for next line
+        }
+        i++;
+    }
+    
+    // Keep the remaining incomplete line in the buffer
+    if (lineStart < buf.length) {
+        buffer = buf.subarray(lineStart);
+    } else {
+        buffer = Buffer.alloc(0);
+    }
+}
 
 function processLineBytes(buffer, start, end, separatorPos) {
     if (separatorPos === -1 || separatorPos < start || separatorPos >= end) return; // Skip malformed lines
