@@ -1,18 +1,11 @@
 const fs = require('fs');
 const fileName = process.argv[2];
-const readStream = fs.createReadStream(fileName, { highWaterMark: 1e9 });
+const readStream = fs.createReadStream(fileName);
 const stationMap = new Map(); // Map to hold data per station
 let buffer = Buffer.alloc(0);
 
 // Constants for parsing
 const NEWLINE = 10; // ASCII for newline
-const SEMICOLON = 59; // ASCII for semicolon
-
-// Temperature can be:
-// 1.1    -> 3 chars -> newline at position i+3
-// 11.1   -> 4 chars -> newline at position i+4
-// -9.9   -> 4 chars -> newline at position i+4
-// -99.9  -> 5 chars -> newline at position i+5
 
 readStream.on('data', function processChunk(chunk) {
     // Concatenate the new chunk with any remaining buffer
@@ -20,16 +13,22 @@ readStream.on('data', function processChunk(chunk) {
     
     let lineStart = 0;
     let i = 0;
+    let separatorPos = -1;
     
     // Iterate through each byte
     while (i < buffer.length) {
+        // Check for semicolon (ASCII 59)
+        if (buffer[i] === 59) { // 59 is ASCII for semicolon
+            separatorPos = i;
+        }
         // Check for newline (ASCII 10)
-        if (buffer[i] === 10) {
+        else if (buffer[i] === NEWLINE) {
             if (i > lineStart) {
                 // Process the line
-                processLineBytes(buffer, lineStart, i);
+                processLineBytes(buffer, lineStart, i, separatorPos);
             }
             lineStart = i + 1;
+            separatorPos = -1; // Reset separator position for next line
         }
         i++;
     }
@@ -45,24 +44,22 @@ readStream.on('data', function processChunk(chunk) {
 readStream.on('end', function processEnd() {
     // Process any remaining data in the buffer
     if (buffer.length > 0) {
-        processLineBytes(buffer, 0, buffer.length);
+        // Find semicolon in any remaining buffer
+        let separatorPos = -1;
+        for (let i = 0; i < buffer.length; i++) {
+            if (buffer[i] === 59) { // 59 is ASCII for semicolon
+                separatorPos = i;
+                break;
+            }
+        }
+        processLineBytes(buffer, 0, buffer.length, separatorPos);
     }
     
     printCompiledResults();
 });
 
-function processLineBytes(buffer, start, end) {
-    let separatorPos = -1;
-    
-    // Find the semicolon separator by iterating through bytes
-    for (let i = start; i < end; i++) {
-        if (buffer[i] === 59) { // 59 is ASCII for semicolon
-            separatorPos = i;
-            break;
-        }
-    }
-    
-    if (separatorPos === -1) return; // Skip malformed lines
+function processLineBytes(buffer, start, end, separatorPos) {
+    if (separatorPos === -1 || separatorPos < start || separatorPos >= end) return; // Skip malformed lines
     
     // Create a station key from the buffer
     const stationBuffer = buffer.subarray(start, separatorPos);
