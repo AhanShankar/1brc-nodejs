@@ -1,6 +1,6 @@
 const fs = require('fs');
 const fileName = process.argv[2];
-const readStream = fs.createReadStream(fileName);
+const readStream = fs.createReadStream(fileName, { highWaterMark: 2 * 1e9 });
 const stationMap = new Map(); // Map to hold data per station
 let buffer = Buffer.alloc(0);
 
@@ -8,13 +8,17 @@ let buffer = Buffer.alloc(0);
 const NEWLINE = 10; // ASCII for newline
 
 readStream.on('data', function processChunk(chunk) {
-    // Concatenate the new chunk with any remaining buffer
-    buffer = Buffer.concat([buffer, chunk]);
-    
+    // Concatenate the new chunk with any remaining buffe
+    if (buffer.length > 0) {
+        buffer = Buffer.concat([buffer, chunk]);
+    } else {
+        buffer = chunk;
+    }
+
     let lineStart = 0;
     let i = 0;
     let separatorPos = -1;
-    
+
     // Iterate through each byte
     while (i < buffer.length) {
         // Check for semicolon (ASCII 59)
@@ -32,7 +36,7 @@ readStream.on('data', function processChunk(chunk) {
         }
         i++;
     }
-    
+
     // Keep the remaining incomplete line in the buffer
     if (lineStart < buffer.length) {
         buffer = buffer.subarray(lineStart);
@@ -54,20 +58,20 @@ readStream.on('end', function processEnd() {
         }
         processLineBytes(buffer, 0, buffer.length, separatorPos);
     }
-    
+
     printCompiledResults();
 });
 
 function processLineBytes(buffer, start, end, separatorPos) {
     if (separatorPos === -1 || separatorPos < start || separatorPos >= end) return; // Skip malformed lines
-    
+
     // Create a station key from the buffer
     const stationBuffer = buffer.subarray(start, separatorPos);
     const stationName = stationBuffer.toString('utf-8');
-    
+
     // Parse temperature value directly from bytes without string conversion
     const temperature = parseTemperatureBytes(buffer, separatorPos + 1, end);
-    
+
     // Update station data
     if (stationMap.has(stationName)) {
         // We've seen this station, update its data
@@ -91,57 +95,57 @@ function processLineBytes(buffer, start, end, separatorPos) {
 function parseTemperatureBytes(buffer, start, end) {
     // Since we know there's always exactly one decimal place, we can
     // simplify by just reading all digits and multiplying appropriately
-    
+
     // Check for minus sign
     let negative = buffer[start] === 45; // '-' is ASCII 45
-    
+
     // Starting position for digits (skip minus sign if present)
     let i = negative ? start + 1 : start;
-    
+
     // First digit before decimal (can be multiple digits if value >= 10)
     let intPart = 0;
-    
+
     // Find the decimal point
     while (i < end && buffer[i] !== 46) { // '.' is ASCII 46
         // Accumulate integer part digits
         intPart = intPart * 10 + (buffer[i] - 48); // '0' is ASCII 48
         i++;
     }
-    
+
     // Skip the decimal point
     i++;
-    
+
     // Read the single digit after decimal (we know there's exactly one)
     const decimalPart = buffer[i] - 48;
-    
+
     // Compute final result: multiply by 10 to get fixed-point integer
     const result = intPart * 10 + decimalPart;
-    
+
     return negative ? -result : result;
 }
 
 function printCompiledResults() {
     // Get sorted station names - using basic JavaScript sort which should match expected behavior
     const sortedStations = Array.from(stationMap.keys()).sort();
-    
+
     // Build result string exactly as in the working implementation
     let result = '{';
-    
+
     for (let i = 0; i < sortedStations.length; i++) {
         if (i > 0) {
             result += ', ';
         }
-        
+
         const stationName = sortedStations[i];
         const data = stationMap.get(stationName);
-        
+
         result += `${stationName}=${round(data.min / 10)}/${round(
             data.sum / 10 / data.count
         )}/${round(data.max / 10)}`;
     }
-    
+
     result += '}\n';
-    
+
     process.stdout.write(result);
 }
 
