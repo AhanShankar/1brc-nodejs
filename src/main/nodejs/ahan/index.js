@@ -1,7 +1,10 @@
-const fs = require('fs');
+import fs from 'fs';
+import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
+import os from 'os';
+import { fileURLToPath } from 'url';
+
 const fileName = process.argv[2];
-const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
-const os = require('os');
+const __filename = fileURLToPath(import.meta.url);
 
 // Constants for parsing
 const NEWLINE = 10; // ASCII for newline
@@ -23,8 +26,8 @@ if (isMainThread) {
         if (targetPos >= fileSize) break;
         
         // Read a small buffer at the target position to find the next newline
-        const buffer = Buffer.alloc(1000);
-        fs.readSync(file, buffer, 0, 1000, targetPos);
+        const buffer = Buffer.allocUnsafe(120);
+        fs.readSync(file, buffer, 0, 120, targetPos);
         
         const nlPos = buffer.indexOf(NEWLINE);
         if (nlPos === -1) {
@@ -90,51 +93,18 @@ if (isMainThread) {
             }
         });
     }
-    
-    // Handle the case where we have no valid workers (small file)
-    if (completedWorkers === numWorkers) {
-        const singleReadStream = fs.createReadStream(fileName);
-        const singleStationMap = new Map();
-        let singleBuffer = Buffer.alloc(0);
-        
-        singleReadStream.on('data', function(chunk) {
-            if (singleBuffer.length > 0) {
-                singleBuffer = Buffer.concat([singleBuffer, chunk]);
-                processBufferSingle(singleBuffer, singleStationMap);
-            } else {
-                processBufferSingle(chunk, singleStationMap);
-            }
-        });
-        
-        singleReadStream.on('end', function() {
-            // Process any remaining data
-            if (singleBuffer.length > 0) {
-                let separatorPos = -1;
-                for (let i = 0; i < singleBuffer.length; i++) {
-                    if (singleBuffer[i] === 59) { // ASCII for semicolon
-                        separatorPos = i;
-                        break;
-                    }
-                }
-                processSingleLine(singleBuffer, 0, singleBuffer.length, separatorPos, singleStationMap);
-            }
-            
-            printCompiledResults(singleStationMap);
-            fs.closeSync(file);
-        });
-    }
 } else {
     // Worker thread code - using original processing logic with minimal changes
     const { fileName, start, end } = workerData;
     const stationMap = new Map();
-    let buffer = Buffer.alloc(0);
+    let buffer = Buffer.allocUnsafe(0);
     
     // Verify valid range
     if (start <= end) {
         const readStream = fs.createReadStream(fileName, {
             start,
             end,
-            highWaterMark: 64 * 1024 // Smaller chunks for better memory usage
+            highWaterMark: 1e6
         });
         
         readStream.on('data', function processChunk(chunk) {
@@ -148,7 +118,7 @@ if (isMainThread) {
                 // No need to keep chunk in buffer if we processed everything
             }
         });
-        
+
         readStream.on('end', function processEnd() {
             // Process any remaining data in the buffer
             if (buffer.length > 0) {
@@ -199,13 +169,11 @@ if (isMainThread) {
         if (lineStart < buf.length) {
             buffer = buf.subarray(lineStart);
         } else {
-            buffer = Buffer.alloc(0);
+            buffer = Buffer.allocUnsafe(0);
         }
     }
     
     function processLineBytes(buffer, start, end, separatorPos) {
-        if (separatorPos === -1 || separatorPos < start || separatorPos >= end) return; // Skip malformed lines
-        
         // Create a station key from the buffer
         const stationBuffer = buffer.subarray(start, separatorPos);
         const stationName = stationBuffer.toString('utf-8');
@@ -230,70 +198,6 @@ if (isMainThread) {
                 count: 1
             });
         }
-    }
-}
-
-// Single-thread processing for small files
-function processBufferSingle(buf, stationMap) {
-    let lineStart = 0;
-    let i = 0;
-    let separatorPos = -1;
-    let buffer = Buffer.alloc(0);
-    
-    // Iterate through each byte
-    while (i < buf.length) {
-        // Check for semicolon (ASCII 59)
-        if (buf[i] === 59) { // 59 is ASCII for semicolon
-            separatorPos = i;
-        }
-        // Check for newline (ASCII 10)
-        else if (buf[i] === NEWLINE) {
-            if (i > lineStart) {
-                // Process the line
-                processSingleLine(buf, lineStart, i, separatorPos, stationMap);
-            }
-            lineStart = i + 1;
-            separatorPos = -1; // Reset separator position for next line
-        }
-        i++;
-    }
-    
-    // Keep the remaining incomplete line
-    if (lineStart < buf.length) {
-        buffer = buf.subarray(lineStart);
-    } else {
-        buffer = Buffer.alloc(0);
-    }
-    
-    return buffer;
-}
-
-function processSingleLine(buffer, start, end, separatorPos, stationMap) {
-    if (separatorPos === -1 || separatorPos < start || separatorPos >= end) return; // Skip malformed lines
-    
-    // Create a station key from the buffer
-    const stationBuffer = buffer.subarray(start, separatorPos);
-    const stationName = stationBuffer.toString('utf-8');
-    
-    // Parse temperature value directly from bytes without string conversion
-    const temperature = parseTemperatureBytes(buffer, separatorPos + 1, end);
-    
-    // Update station data
-    if (stationMap.has(stationName)) {
-        // We've seen this station, update its data
-        const stationData = stationMap.get(stationName);
-        stationData.min = Math.min(stationData.min, temperature);
-        stationData.max = Math.max(stationData.max, temperature);
-        stationData.sum += temperature;
-        stationData.count += 1;
-    } else {
-        // New station, add to the map
-        stationMap.set(stationName, {
-            min: temperature,
-            max: temperature,
-            sum: temperature,
-            count: 1
-        });
     }
 }
 
