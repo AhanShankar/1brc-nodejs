@@ -89,7 +89,7 @@ if (isMainThread) {
             completedWorkers++;
             if (completedWorkers === numWorkers) {
                 // All workers done, print results
-                // printCompiledResults(globalMap);
+                printCompiledResults(globalMap);
                 fs.closeSync(file);
             }
         });
